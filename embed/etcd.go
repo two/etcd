@@ -89,11 +89,13 @@ type peerListener struct {
 	close func(context.Context) error
 }
 
+// StartEtcd 回开启一个 etcd server, 并且接收 HTTP 请求，但是这个函数并不会保证加入到了集群中
+// 加入集群是由  Etcd.Server.ReadyNotify() 来实现的
 // StartEtcd launches the etcd server and HTTP handlers for client/server communication.
 // The returned Etcd.Server is not guaranteed to have joined the cluster. Wait
 // on the Etcd.Server.ReadyNotify() channel to know when it completes and is ready for use.
 func StartEtcd(inCfg *Config) (e *Etcd, err error) {
-	if err = inCfg.Validate(); err != nil {
+	if err = inCfg.Validate(); err != nil { // 检查一些参数是否合法
 		return nil, err
 	}
 	serving := false
@@ -119,7 +121,8 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 			zap.Strings("listen-peer-urls", e.cfg.getLPURLs()),
 		)
 	}
-	if e.Peers, err = configurePeerListeners(cfg); err != nil {
+	// 开启 peer server, 默认端口 2380
+	if e.Peers, err = configurePeerListeners(cfg); err != nil { // 节点数据赋值
 		return e, err
 	}
 
@@ -129,11 +132,12 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 			zap.Strings("listen-client-urls", e.cfg.getLCURLs()),
 		)
 	}
-	if e.sctxs, err = configureClientListeners(cfg); err != nil {
+	// 开启 client server,  默认端口 2379，并且支持多协议(grpc,http, https)
+	if e.sctxs, err = configureClientListeners(cfg); err != nil { // client 数据赋值
 		return e, err
 	}
 
-	for _, sctx := range e.sctxs {
+	for _, sctx := range e.sctxs { // 当前 server ctx 记录
 		e.Clients = append(e.Clients, sctx.l)
 	}
 
@@ -141,6 +145,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		urlsmap types.URLsMap
 		token   string
 	)
+	// 注册 token
 	memberInitialized := true
 	if !isMemberInitialized(cfg) {
 		memberInitialized = false
@@ -208,10 +213,12 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		CompactionBatchLimit:       cfg.ExperimentalCompactionBatchLimit,
 	}
 	print(e.cfg.logger, *cfg, srvcfg, memberInitialized)
+	// 根据配置新建一个 server 对象
 	if e.Server, err = etcdserver.NewServer(srvcfg); err != nil {
 		return e, err
 	}
 
+	// buffer channel 保证服务关闭的时候不会阻塞
 	// buffer channel so goroutines on closed connections won't wait forever
 	e.errc = make(chan error, len(e.Peers)+len(e.Clients)+2*len(e.sctxs))
 
@@ -225,14 +232,17 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 			return e, err
 		}
 	}
-	e.Server.Start()
+	e.Server.Start() // 开启一个 server
 
+	// 与每个 peer 保持通信
 	if err = e.servePeers(); err != nil {
 		return e, err
 	}
+	// 与每个 client 保持通信
 	if err = e.serveClients(); err != nil {
 		return e, err
 	}
+	// 与每个 metrics 保持通信
 	if err = e.serveMetrics(); err != nil {
 		return e, err
 	}
@@ -453,6 +463,7 @@ func configurePeerListeners(cfg *Config) (peers []*peerListener, err error) {
 	if err = updateCipherSuites(&cfg.PeerTLSInfo, cfg.CipherSuites); err != nil {
 		return nil, err
 	}
+	// 认证
 	if err = cfg.PeerSelfCert(); err != nil {
 		if cfg.logger != nil {
 			cfg.logger.Fatal("failed to get peer self-signed certs", zap.Error(err))
@@ -644,6 +655,7 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 			continue
 		}
 
+		// 开始监听 client 端口
 		if sctx.l, err = net.Listen(network, addr); err != nil {
 			return nil, err
 		}

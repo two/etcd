@@ -96,8 +96,8 @@ type configFlags struct {
 
 func newConfig() *config {
 	cfg := &config{
-		ec: *embed.NewConfig(),
-		cp: configProxy{
+		ec: *embed.NewConfig(), // server  相关默认配置, 有些配置可以通过启动参数传递
+		cp: configProxy{ // proxy 相关配置
 			Proxy:                  proxyFlagOff,
 			ProxyFailureWaitMs:     5000,
 			ProxyRefreshIntervalMs: 30000,

@@ -24,18 +24,20 @@ import (
 )
 
 func Main() {
+	// 检查支持的平台
 	checkSupportArch()
 
+	// 参数解析
 	if len(os.Args) > 1 {
 		cmd := os.Args[1]
 		if covArgs := os.Getenv("ETCDCOV_ARGS"); len(covArgs) > 0 {
 			args := strings.Split(os.Getenv("ETCDCOV_ARGS"), "\xe7\xcd")[1:]
 			rootCmd.SetArgs(args)
-			cmd = "grpc-proxy"
+			cmd = "grpc-proxy" // 如果设置了 ETCDCOV_ARGS 环境变量，就是以 grpc-proxy 方式启动
 		}
 		switch cmd {
-		case "gateway", "grpc-proxy":
-			if err := rootCmd.Execute(); err != nil {
+		case "gateway", "grpc-proxy": // 如果设置了 cmd变量，就以变量的形式启动,包括 gateway, grpc-proxy 两种方式
+			if err := rootCmd.Execute(); err != nil { // rootCmd.Execute 就等于调用 `etcd gateway` 或者 `etcd grpc-proxy`, 其它的参数不支持，调用的是 `etcd`
 				fmt.Fprint(os.Stderr, err)
 				os.Exit(1)
 			}

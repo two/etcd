@@ -727,6 +727,7 @@ func (s *EtcdServer) adjustTicks() {
 // should be implemented in goroutines.
 func (s *EtcdServer) Start() {
 	s.start()
+	// 下面的函数将在 server 关闭后等执行完成
 	s.goAttach(func() { s.adjustTicks() })
 	s.goAttach(func() { s.publish(s.Cfg.ReqTimeout()) })
 	s.goAttach(s.purgeFile)
@@ -800,6 +801,7 @@ func (s *EtcdServer) start() {
 		}
 	}
 
+	// 通过一个 goroutine 开启服务
 	// TODO: if this is an empty log, writes all peer infos
 	// into the first entry
 	go s.run()
@@ -1034,10 +1036,10 @@ func (s *EtcdServer) run() {
 
 	for {
 		select {
-		case ap := <-s.r.apply():
+		case ap := <-s.r.apply(): // 数据更新
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
 			sched.Schedule(f)
-		case leases := <-expiredLeaseC:
+		case leases := <-expiredLeaseC: // 租期过期处理
 			s.goAttach(func() {
 				// Increases throughput of expired leases deletion process through parallelization
 				c := make(chan struct{}, maxPendingRevokes)
@@ -1069,7 +1071,7 @@ func (s *EtcdServer) run() {
 					})
 				}
 			})
-		case err := <-s.errorc:
+		case err := <-s.errorc: // 出现错误，退出 server
 			if lg != nil {
 				lg.Warn("server error", zap.Error(err))
 				lg.Warn("data-dir used by this member must be removed")
@@ -1078,11 +1080,11 @@ func (s *EtcdServer) run() {
 				plog.Infof("the data-dir used by this member must be removed.")
 			}
 			return
-		case <-getSyncC():
+		case <-getSyncC(): // 定期同步数据
 			if s.v2store.HasTTLKeys() {
 				s.sync(s.Cfg.ReqTimeout())
 			}
-		case <-s.stop:
+		case <-s.stop: // 停止信号，停止 server
 			return
 		}
 	}
@@ -1978,6 +1980,8 @@ func (s *EtcdServer) sync(timeout time.Duration) {
 	})
 }
 
+// publish 是通过广播，把当前 server 加入到集群当中
+// 这个函数回阻塞，直到注册成功或者服务停止
 // publish registers server information into the cluster. The information
 // is the JSON representation of this server's member struct, updated with the
 // static clientURLs of the server.

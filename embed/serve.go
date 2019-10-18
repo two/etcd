@@ -82,6 +82,11 @@ func newServeCtx(lg *zap.Logger) *serveCtx {
 // serve accepts incoming connections on the listener l,
 // creating a new service goroutine for each. The service goroutines
 // read requests and then call handler to reply to them.
+// 这里使用了 github.com/soheilhy/cmux 来实现链接复用器
+// 同一个链接可以根据其协议分发到不同的 server 协议处理
+// 支持 grpc, ssh, http, https等
+// 同一个链接依次只能是一个协议
+// 根据协议头的前几个字段来判断协议
 func (sctx *serveCtx) serve(
 	s *etcdserver.EtcdServer,
 	tlsinfo *transport.TLSInfo,
@@ -107,6 +112,7 @@ func (sctx *serveCtx) serve(
 		}
 	}()
 
+	// http 请求
 	if sctx.insecure {
 		gs = v3rpc.Server(s, nil, gopts...)
 		v3electionpb.RegisterElectionServer(gs, servElection)
@@ -114,7 +120,9 @@ func (sctx *serveCtx) serve(
 		if sctx.serviceRegister != nil {
 			sctx.serviceRegister(gs)
 		}
+		// 匹配 HTTP2 协议
 		grpcl := m.Match(cmux.HTTP2())
+		// 启动 grpc server
 		go func() { errHandler(gs.Serve(grpcl)) }()
 
 		var gwmux *gw.ServeMux
@@ -131,7 +139,9 @@ func (sctx *serveCtx) serve(
 			Handler:  createAccessController(sctx.lg, s, httpmux),
 			ErrorLog: logger, // do not log user error
 		}
+		// 匹配 HTTP1 协议
 		httpl := m.Match(cmux.HTTP1())
+		// 启动 client HTTP Server
 		go func() { errHandler(srvhttp.Serve(httpl)) }()
 
 		sctx.serversC <- &servers{grpc: gs, http: srvhttp}
@@ -145,6 +155,7 @@ func (sctx *serveCtx) serve(
 		}
 	}
 
+	// https 请求
 	if sctx.secure {
 		tlscfg, tlsErr := tlsinfo.ServerConfig()
 		if tlsErr != nil {
@@ -172,6 +183,7 @@ func (sctx *serveCtx) serve(
 		}
 
 		var tlsl net.Listener
+		// 支持 HTTPS
 		tlsl, err = transport.NewTLSListener(m.Match(cmux.Any()), tlsinfo)
 		if err != nil {
 			return err
@@ -270,6 +282,7 @@ func (sctx *serveCtx) registerGateway(opts []grpc.DialOption) (*gw.ServeMux, err
 
 func (sctx *serveCtx) createMux(gwmux *gw.ServeMux, handler http.Handler) *http.ServeMux {
 	httpmux := http.NewServeMux()
+	// 路由设置
 	for path, h := range sctx.userHandlers {
 		httpmux.Handle(path, h)
 	}
@@ -309,6 +322,7 @@ type accessController struct {
 	mux *http.ServeMux
 }
 
+// 实现 http.Handler 接口，处理请求
 func (ac *accessController) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// redirect for backward compatibilities
 	if req != nil && req.URL != nil && strings.HasPrefix(req.URL.Path, "/v3beta/") {

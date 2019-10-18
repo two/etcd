@@ -53,11 +53,12 @@ var (
 	dirEmpty  = dirType("empty")
 )
 
+//  直接启动 etcd server 或者 proxy 方式启动
 func startEtcdOrProxyV2() {
 	grpc.EnableTracing = false
 
-	cfg := newConfig()
-	defaultInitialCluster := cfg.ec.InitialCluster
+	cfg := newConfig()                             // 默认配置项
+	defaultInitialCluster := cfg.ec.InitialCluster // 对应配置文件中的 ETCD_INITIAL_CLUSTER 变量，默认的集群节点配置
 
 	err := cfg.parse(os.Args[1:])
 	lg := cfg.ec.GetLogger()
@@ -94,6 +95,7 @@ func startEtcdOrProxyV2() {
 		}
 	}()
 
+	// 重新修改一下 cluster 配置中的 cluster 相关的信息，比如获取当前计算机的 hostname 代替 0.0.0.0 或 localhost
 	defaultHost, dhErr := (&cfg.ec).UpdateDefaultClusterFromName(defaultInitialCluster)
 	if defaultHost != "" {
 		if lg != nil {
@@ -128,8 +130,8 @@ func startEtcdOrProxyV2() {
 	var stopped <-chan struct{}
 	var errc <-chan error
 
-	which := identifyDataDirOrDie(cfg.ec.GetLogger(), cfg.ec.Dir)
-	if which != dirEmpty {
+	which := identifyDataDirOrDie(cfg.ec.GetLogger(), cfg.ec.Dir) // 检查存储数据的目录, 返回数据存储的类型是成员还是 proxy 等
+	if which != dirEmpty {                                        // 节点目录不为空，证明不是第一次使用，恢复之前的配置
 		if lg != nil {
 			lg.Info(
 				"server has been already initialized",
@@ -140,9 +142,9 @@ func startEtcdOrProxyV2() {
 			plog.Noticef("the server is already initialized as %v before, starting as etcd %v...", which, which)
 		}
 		switch which {
-		case dirMember:
+		case dirMember: // 如果是成员类型，需要开启一个 etcd 服务
 			stopped, errc, err = startEtcd(&cfg.ec)
-		case dirProxy:
+		case dirProxy: // 如果是proxy, 则开启一个 proxy 服务
 			err = startProxy(cfg)
 		default:
 			if lg != nil {
@@ -154,9 +156,9 @@ func startEtcdOrProxyV2() {
 				plog.Panicf("unhandled dir type %v", which)
 			}
 		}
-	} else {
+	} else { // 如果为空，则根据参数启动服务
 		shouldProxy := cfg.isProxy()
-		if !shouldProxy {
+		if !shouldProxy { // 如果不是 proxy, 则启动一个正常的 server
 			stopped, errc, err = startEtcd(&cfg.ec)
 			if derr, ok := err.(*etcdserver.DiscoveryError); ok && derr.Err == v2discovery.ErrFullCluster {
 				if cfg.shouldFallbackToProxy() {
@@ -177,11 +179,12 @@ func startEtcdOrProxyV2() {
 				}
 			}
 		}
-		if shouldProxy {
+		if shouldProxy { // 如果是 proxy ,则启动一个 proxy 服务
 			err = startProxy(cfg)
 		}
 	}
 
+	// 启动失败，根据错误类型进行日志打印
 	if err != nil {
 		if derr, ok := err.(*etcdserver.DiscoveryError); ok {
 			switch derr.Err {
@@ -274,16 +277,16 @@ func startEtcdOrProxyV2() {
 		}
 	}
 
-	osutil.HandleInterrupts(lg)
+	osutil.HandleInterrupts(lg) // 接收外界信号
 
 	// At this point, the initialization of etcd is done.
 	// The listeners are listening on the TCP ports and ready
 	// for accepting connections. The etcd instance should be
 	// joined with the cluster and ready to serve incoming
 	// connections.
-	notifySystemd(lg)
+	notifySystemd(lg) // 把型号发送给正在运行的 etcd 守护进程
 
-	select {
+	select { // 进入阻塞状态，除非出现错误或者服务关闭
 	case lerr := <-errc:
 		// fatal out on listener errors
 		if lg != nil {
@@ -299,14 +302,14 @@ func startEtcdOrProxyV2() {
 
 // startEtcd runs StartEtcd in addition to hooks needed for standalone etcd.
 func startEtcd(cfg *embed.Config) (<-chan struct{}, <-chan error, error) {
-	e, err := embed.StartEtcd(cfg)
+	e, err := embed.StartEtcd(cfg) // 根据配置开启一个 etcd server
 	if err != nil {
 		return nil, nil, err
 	}
-	osutil.RegisterInterruptHandler(e.Close)
-	select {
-	case <-e.Server.ReadyNotify(): // wait for e.Server to join the cluster
-	case <-e.Server.StopNotify(): // publish aborted from 'ErrStopped'
+	osutil.RegisterInterruptHandler(e.Close) // 注册通过信号关闭时的回调函数
+	select {                                 // 进入阻塞,除非接收到下面的信号
+	case <-e.Server.ReadyNotify(): // wait for e.Server to join the cluster  阻塞，直到当前 server 注册到了集群中
+	case <-e.Server.StopNotify(): // publish aborted from 'ErrStopped' 注册失败
 	}
 	return e.Server.StopNotify(), e.Err(), nil
 }

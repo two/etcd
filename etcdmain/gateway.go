@@ -37,6 +37,7 @@ var (
 	gatewayCA                    string
 )
 
+//  启动参数解析
 var (
 	rootCmd = &cobra.Command{
 		Use:        "etcd",

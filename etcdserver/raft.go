@@ -168,9 +168,9 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 
 		for {
 			select {
-			case <-r.ticker.C:
+			case <-r.ticker.C: // 心跳保活
 				r.tick()
-			case rd := <-r.Ready():
+			case rd := <-r.Ready(): // 更新数据
 				if rd.SoftState != nil {
 					newLeader := rd.SoftState.Lead != raft.None && rh.getLead() != rd.SoftState.Lead
 					if newLeader {
