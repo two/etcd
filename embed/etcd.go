@@ -238,11 +238,11 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 	if err = e.servePeers(); err != nil {
 		return e, err
 	}
-	// 与每个 client 保持通信
+	//  开启 server 与每个 client 保持通信, 可以同时支持多重协议
 	if err = e.serveClients(); err != nil {
 		return e, err
 	}
-	// 与每个 metrics 保持通信
+	// 与每个 metrics 保持通信, 主要是用来监控和健康检查的
 	if err = e.serveMetrics(); err != nil {
 		return e, err
 	}
@@ -546,6 +546,7 @@ func (e *Etcd) servePeers() (err error) {
 		}
 	}
 
+	// 开启 server, 同时支持多个协议
 	for _, p := range e.Peers {
 		u := p.Listener.Addr().String()
 		gs := v3rpc.Server(e.Server, peerTLScfg)
@@ -557,6 +558,7 @@ func (e *Etcd) servePeers() (err error) {
 			ErrorLog:    defaultLog.New(ioutil.Discard, "", 0), // do not log user error
 		}
 		go srv.Serve(m.Match(cmux.Any()))
+		// peerListener.serve() 函数赋值为 m.Serve, 可以开启多个协议 server 支持
 		p.serve = func() error { return m.Serve() }
 		p.close = func(ctx context.Context) error {
 			// gracefully shutdown http.Server
@@ -699,6 +701,7 @@ func configureClientListeners(cfg *Config) (sctxs map[string]*serveCtx, err erro
 				plog.Info("stopping listening for client requests on ", u.Host)
 			}
 		}()
+		// 路由设置
 		for k := range cfg.UserHandlers {
 			sctx.userHandlers[k] = cfg.UserHandlers[k]
 		}
@@ -732,7 +735,7 @@ func (e *Etcd) serveClients() (err error) {
 	if e.Config().EnableV2 {
 		if len(e.Config().ExperimentalEnableV2V3) > 0 {
 			srv := v2v3.NewServer(e.cfg.logger, v3client.New(e.Server), e.cfg.ExperimentalEnableV2V3)
-			h = v2http.NewClientHandler(e.GetLogger(), srv, e.Server.Cfg.ReqTimeout())
+			h = v2http.NewClientHandler(e.GetLogger(), srv, e.Server.Cfg.ReqTimeout()) // 默认路由设置
 		} else {
 			h = v2http.NewClientHandler(e.GetLogger(), e.Server, e.Server.Cfg.ReqTimeout())
 		}
@@ -771,32 +774,34 @@ func (e *Etcd) serveMetrics() (err error) {
 		grpc_prometheus.EnableHandlingTimeHistogram()
 	}
 
-	if len(e.cfg.ListenMetricsUrls) > 0 {
-		metricsMux := http.NewServeMux()
-		etcdhttp.HandleMetricsHealth(metricsMux, e.Server)
+	if len(e.cfg.ListenMetricsUrls) == 0 {
+		return nil
+	}
 
-		for _, murl := range e.cfg.ListenMetricsUrls {
-			tlsInfo := &e.cfg.ClientTLSInfo
-			if murl.Scheme == "http" {
-				tlsInfo = nil
-			}
-			ml, err := transport.NewListener(murl.Host, murl.Scheme, tlsInfo)
-			if err != nil {
-				return err
-			}
-			e.metricsListeners = append(e.metricsListeners, ml)
-			go func(u url.URL, ln net.Listener) {
-				if e.cfg.logger != nil {
-					e.cfg.logger.Info(
-						"serving metrics",
-						zap.String("address", u.String()),
-					)
-				} else {
-					plog.Info("listening for metrics on ", u.String())
-				}
-				e.errHandler(http.Serve(ln, metricsMux))
-			}(murl, ml)
+	metricsMux := http.NewServeMux()
+	etcdhttp.HandleMetricsHealth(metricsMux, e.Server)
+
+	for _, murl := range e.cfg.ListenMetricsUrls {
+		tlsInfo := &e.cfg.ClientTLSInfo
+		if murl.Scheme == "http" {
+			tlsInfo = nil
 		}
+		ml, err := transport.NewListener(murl.Host, murl.Scheme, tlsInfo)
+		if err != nil {
+			return err
+		}
+		e.metricsListeners = append(e.metricsListeners, ml)
+		go func(u url.URL, ln net.Listener) {
+			if e.cfg.logger != nil {
+				e.cfg.logger.Info(
+					"serving metrics",
+					zap.String("address", u.String()),
+				)
+			} else {
+				plog.Info("listening for metrics on ", u.String())
+			}
+			e.errHandler(http.Serve(ln, metricsMux))
+		}(murl, ml)
 	}
 	return nil
 }

@@ -74,8 +74,8 @@ func newServeCtx(lg *zap.Logger) *serveCtx {
 		lg:           lg,
 		ctx:          ctx,
 		cancel:       cancel,
-		userHandlers: make(map[string]http.Handler),
-		serversC:     make(chan *servers, 2), // in case sctx.insecure,sctx.secure true
+		userHandlers: make(map[string]http.Handler), // 路由设置
+		serversC:     make(chan *servers, 2),        // in case sctx.insecure,sctx.secure true
 	}
 }
 
@@ -133,6 +133,7 @@ func (sctx *serveCtx) serve(
 			}
 		}
 
+		// httpmux 包含了路由设置
 		httpmux := sctx.createMux(gwmux, handler)
 
 		srvhttp := &http.Server{
